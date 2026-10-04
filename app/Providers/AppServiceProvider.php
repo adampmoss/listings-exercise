@@ -2,7 +2,10 @@
 
 namespace App\Providers;
 
+use App\Events\ListingBecameLive;
+use App\Listeners\GenerateSavedSearchAlerts;
 use Illuminate\Http\Resources\Json\JsonResource;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
@@ -24,5 +27,7 @@ class AppServiceProvider extends ServiceProvider
         // envelope around every resource just gets in the way. Paginated
         // collections keep their data/links/meta structure regardless.
         JsonResource::withoutWrapping();
+
+        Event::listen(ListingBecameLive::class, GenerateSavedSearchAlerts::class);
     }
 }
