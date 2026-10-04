@@ -13,6 +13,7 @@ use Illuminate\Support\Carbon;
  * @property int $user_id
  * @property int $saved_search_id
  * @property int $listing_id
+ * @property Carbon|null $read_at
  * @property Carbon $created_at
  * @property Carbon $updated_at
  * @property-read User $user
@@ -29,6 +30,16 @@ class Alert extends Model
         'saved_search_id',
         'listing_id',
     ];
+
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return [
+            'read_at' => 'datetime',
+        ];
+    }
 
     /**
      * @return BelongsTo<User, $this>
