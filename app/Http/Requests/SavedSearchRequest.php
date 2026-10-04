@@ -20,7 +20,7 @@ class SavedSearchRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'max_price' => ['nullable', 'integer', 'min:0'],
+            'max_price' => ['nullable', 'integer', 'min:1'],
             'min_bedrooms' => ['nullable', 'integer', 'min:0', 'max:20'],
             'property_type' => ['nullable', new Enum(PropertyType::class)],
             'region' => ['nullable', 'string', 'max:100'],

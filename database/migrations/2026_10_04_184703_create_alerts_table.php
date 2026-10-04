@@ -16,6 +16,7 @@ return new class extends Migration
             $table->timestamp('read_at')->nullable();
             $table->timestamps();
 
+            $table->index('saved_search_id');
             $table->unique(['user_id', 'listing_id']);
         });
     }

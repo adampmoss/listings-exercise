@@ -20,7 +20,7 @@ class ListingObserver
         if (
             $listing->wasChanged('status')
             && $listing->status === ListingStatus::Live
-            && $listing->getOriginal('status') !== ListingStatus::Live
+            && $listing->getOriginal('status') !== ListingStatus::Live->value
         ) {
             ListingBecameLive::dispatch($listing);
         }

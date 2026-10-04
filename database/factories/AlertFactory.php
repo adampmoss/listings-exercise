@@ -23,7 +23,14 @@ class AlertFactory extends Factory
         return [
             'user_id' => User::factory(),
             'saved_search_id' => SavedSearch::factory(),
-            'listing_id' => Listing::factory()->live(),
+            'listing_id' => Listing::factory(),
         ];
+    }
+
+    public function read(): static
+    {
+        return $this->state(fn () => [
+            'read_at' => now(),
+        ]);
     }
 }
