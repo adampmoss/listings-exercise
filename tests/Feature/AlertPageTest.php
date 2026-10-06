@@ -85,7 +85,6 @@ class AlertPageTest extends TestCase
                 ->has('alerts.data.0', fn (AssertableInertia $alert) => $alert
                     ->has('id')
                     ->has('created_at')
-                    ->has('read_at')
                     ->has('listing', fn (AssertableInertia $l) => $l
                         ->where('id', $listing->id)
                         ->where('price', 250_000)

@@ -26,11 +26,4 @@ class AlertFactory extends Factory
             'listing_id' => Listing::factory(),
         ];
     }
-
-    public function read(): static
-    {
-        return $this->state(fn () => [
-            'read_at' => now(),
-        ]);
-    }
 }

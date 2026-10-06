@@ -13,7 +13,6 @@ return new class extends Migration
             $table->foreignId('user_id')->constrained()->cascadeOnDelete();
             $table->foreignId('saved_search_id')->constrained()->cascadeOnDelete();
             $table->foreignId('listing_id')->constrained()->cascadeOnDelete();
-            $table->timestamp('read_at')->nullable();
             $table->timestamps();
 
             $table->index('saved_search_id');
