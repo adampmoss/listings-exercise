@@ -1,61 +1,106 @@
-# Notes
+# Implementation Notes
 
-## Events
+## Approach
 
-As someone who has worked with an entore EDA in a previous role I was very keen to make the alert generation dependent on a real event "ListingUpdated". This is based on a created() or updated() observer method by a listener called ListingObserver. The conditions are:
+I modelled **a listing becoming live** as a domain event.
 
-- Status _was_ changed
-- Listing status is now "Live"
-- The status before was NOT live
+A `ListingObserver` detects when a listing is either created as live or transitions from another status to live, and dispatches a `ListingBecameLive` event.
 
-I also love events because in EDA this opens up the possibility in the future for other cool things to happen when the event occurs such as hooking in different notification types or triggering Analytics events.
+`GenerateSavedSearchAlerts` handles that event, checks the listing against saved searches, and creates an alert for each user with a matching search.
 
-The requirement of the task mentioned “a listing became live” as a domain concept, so a domain event was the right fit for this. It's set up using `QUEUE_CONNECTION=sync` so the listener will do the job straight away, but this could easily become a queue job (SQS or Laravel Queue driver) and would certainly do this at scale.
+The listener implements `ShouldQueue`. The exercise currently uses `QUEUE_CONNECTION=sync`, so this work happens immediately, but the same design could be moved to a real queue in production without changing the event flow.
 
-The resulting matches are persisted in the alerts table. If we later wanted email notifications, I'd probably dispatch separate queued jobs from newly created alerts, and track delivery separately from read_at, because read state and notification-delivery state are different concerns."
+This also keeps the listing lifecycle separate from alert generation and gives us a natural extension point for other behaviour in future.
 
-## Models & Relationships
+## Saved searches
 
-True to the current system architecture I created a new model for "SavedSearch" and "Alert", a user can have many of each and both `belongTo` a User.
+I introduced a `SavedSearch` model containing the four criteria required by the exercise:
 
-### SavedSearch
+- Maximum price
+- Minimum bedrooms
+- Property type
+- Region
 
-I used separate columns for the search criteria because there are only four fields with clearly defined types. It also makes the SavedSearch data queryable, whereas a data column containing a JSON string would require much more processing when querying.
+The criteria are stored as individual columns rather than JSON because the fields are known, strongly typed and potentially useful when querying.
 
-### Alert
+A null value means **no restriction** for that criterion. For example, a search containing only `region = Manchester` will match any listing in Manchester regardless of its price, bedroom count or property type.
 
-An alert is a very simple model/DB structure with foreign keys for user ID, savedSearch ID and listing ID. An alert can never be duplicated because I protect it in two ways: firstOrCreate() checks for an existing user + listing combination, and there's also a DB constraint on user_id and listing_id. No PII in this table is a deliberate choice.
+The matching logic lives in `SavedSearch::matches()`. This keeps the domain rule independently testable and reusable outside the alert listener.
 
-Alerts are unique per user per listing (enforced by the DB constraint), so the process is idempotent.
+## Alerts
 
-## Tradeoffs & Decisions
+Alerts are persisted as first-class records relating a user, saved search and listing.
 
-- No backfill. Alerts are only generated for listings that become live after a search is saved. Existing live listings are discoverable through normal search — flooding the alerts list on save would be noisy.
-- One alert per user per listing. If a listing matches two of a user's saved searches, they get one alert (linked to the first matching search). The unique constraint on [user_id, listing_id] enforces this.
-- Null = no restriction. A saved search with only region: Manchester matches any price, bedroom count, or property type in Manchester.
-- Criteria are deliberately limited to what the task specifies. A price range (min + max) would be much better for users, post code radius instead of a hardcoded region, or garden/parking flags are natural extensions but would be scope creep here.
+There is deliberately only **one alert per user per listing**, even if several of that user's saved searches match the same listing.
 
-One tradeoff is that this code doesn't deal with a listing being updated, only when it goes live. So if a house drops in value into someones criteria range it would not trigger the observer. This would be a potential improvement to make.
+Duplicate alerts are protected against at two levels:
 
-The biggest risk to scaling is the SavedSearc::query()->cursor() which could potentially have millions of records, to run the matches() function against - this could run many times a day. I used matches() for this exercise for simplicity, but in a production environment would pass the matching logic to SQL, e.g:
+- `firstOrCreate()` checks for an existing user/listing combination.
+- A database unique constraint on `[user_id, listing_id]` provides the final guarantee.
 
+This also makes alert generation idempotent if the event or queued listener is ever retried.
+
+The alerts page loads the related listing, branch and saved search up front to avoid N+1 queries when rendering the results.
+
+## Authorisation and validation
+
+Saved searches are always queried through the current user, so users only see their own searches and alerts.
+
+Deletion is additionally protected by a `SavedSearchPolicy`.
+
+The save-search request validates each individual criterion and also requires at least one criterion to be supplied, preventing an empty search that would match every listing.
+
+## Product decisions
+
+**No backfill**
+
+Saving a search does not immediately generate alerts for existing live listings. Those properties are already available through the normal search experience. Alerts represent new matching listings becoming available after the search has been saved.
+
+**One alert per listing**
+
+If two saved searches belonging to the same user match the same listing, only one alert is generated. This avoids showing duplicate notifications for the same property.
+
+**Only becoming live triggers an alert**
+
+The current implementation deliberately follows the exercise requirement: alerts are generated when a listing becomes live.
+
+An update to an already-live listing does not currently trigger matching again. For example, if the price of an existing live property later dropped into a user's price range, they would not receive a new alert. Supporting meaningful listing updates would be a useful future extension.
+
+## Scaling considerations
+
+The main limitation of the current implementation is that every saved search is considered when a listing becomes live:
+
+```php
+SavedSearch::query()->cursor()
 ```
+
+Using `cursor()` avoids loading the entire collection into PHP memory at once, but it still means every saved search must eventually be evaluated.
+
+That is reasonable for this exercise, but would not scale to millions of saved searches.
+
+At production scale I would move the initial filtering into the database so that only likely matches are returned, for example:
+
+```php
 SavedSearch::query()
-    ->where(fn ($q) =>
-        $q->whereNull('max_price')
-          ->orWhere('max_price', '>=', $listing->price)
+    ->where(fn ($query) =>
+        $query->whereNull('max_price')
+            ->orWhere('max_price', '>=', $listing->price)
     )
-    // other criteria...
+    // Apply equivalent filters for the other criteria...
     ->cursor();
 ```
 
-## Alert processing — next steps
+The existing `matches()` method could then still be used against the smaller candidate set as the final domain check.
 
-A second job would dispatch email/push notifications asynchronously, respecting user preferences and digest frequency.
+Alert generation could also run asynchronously through a production queue such as SQS.
 
-The alerts table currently serves as both a record of matches and the user-facing alert list. In production it would also act as a staging area for delivery:
+## Further improvements
 
-1. A scheduled worker queries alerts that have not yet been delivered (a notified_at column or a separate alert_notifications table would track this).
-2. The worker batches alerts per user into a digest to avoid spamming — the support team's concern ("don't spam people") is a real constraint.
-3. Each batch is dispatched as a queued notification (Laravel's mail and/or database channels), decoupling delivery from generation so failures can be retried independently.
-4. The database uniqueness constraint on [user_id, listing_id] means the generation side is idempotent, so a retried or duplicated job cannot produce duplicate alerts, so the worker only needs to track delivery state.
+Given more time, useful extensions would include:
+
+- Alerting when meaningful changes to an existing listing cause it to newly match a saved search.
+- Email or push notifications, potentially grouped into digests to avoid excessive notifications.
+- Moving more of the candidate matching into SQL as the number of saved searches grows.
+- More flexible search criteria such as minimum/maximum price ranges and location-radius searches.
+
+These have deliberately been left outside the implementation to keep the solution focused on the requirements of the exercise.
